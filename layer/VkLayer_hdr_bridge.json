@@ -1,0 +1,16 @@
+{
+  "file_format_version": "1.0.0",
+  "layer": {
+    "name":                   "VK_LAYER_HDR_BRIDGE_capture",
+    "type":                   "GLOBAL",
+    "library_path": "../target/release/libvk_hdr_bridge.so",
+    "api_version":            "1.3.0",
+    "implementation_version": "1",
+    "description":            "HDR capture bridge layer",
+    "functions": {
+      "vkGetInstanceProcAddr": "hdr_bridge_GetInstanceProcAddr",
+      "vkGetDeviceProcAddr":   "hdr_bridge_GetDeviceProcAddr"
+    },
+    "disable_environment": { "VK_HDR_BRIDGE_DISABLE": "1" }
+  }
+}
