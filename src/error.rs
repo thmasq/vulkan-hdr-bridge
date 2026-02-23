@@ -8,8 +8,6 @@ pub enum BridgeError {
     Vk(#[from] ash::vk::Result),
     #[error("FFmpeg process error: {0}")]
     Ffmpeg(String),
-    #[error("HDR metadata mismatch: {0}")]
-    MetadataMismatch(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

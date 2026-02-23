@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod capture;
 pub mod dispatch;
 mod error;
@@ -137,9 +135,6 @@ struct InstanceState {
 
 struct SwapchainInfo {
     images: Vec<vk::Image>,
-    format: vk::Format,
-    width: u32,
-    height: u32,
 }
 
 struct DeviceState {
@@ -459,7 +454,7 @@ pub unsafe extern "system" fn hdr_bridge_CreateDevice(
 
     let dt = Arc::new(unsafe { DeviceTable::load(device, next_gdpa) });
 
-    let inst_key = unsafe { dispatch_key(phys_device.as_raw()) };
+    let _inst_key = unsafe { dispatch_key(phys_device.as_raw()) };
     let it = {
         let instances = INSTANCES.lock().unwrap();
         instances
@@ -683,15 +678,7 @@ pub unsafe extern "system" fn hdr_bridge_CreateSwapchainKHR(
 
     match capture {
         Ok(cap) => {
-            state.swapchains.insert(
-                sc_key,
-                SwapchainInfo {
-                    images,
-                    format,
-                    width,
-                    height,
-                },
-            );
+            state.swapchains.insert(sc_key, SwapchainInfo { images });
             state.captures.insert(sc_key, cap);
         }
         Err(e) => {

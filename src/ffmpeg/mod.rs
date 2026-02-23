@@ -53,7 +53,7 @@ impl FfmpegSink {
             .args([
                 "-svtav1-params",
                 &format!(
-                    "enable-overlays=1:enable-qm=1:tune=0:color-primaries=9:transfer-characteristics=16:matrix-coefficients=9:color-range=1:\
+                    "tune=0:color-primaries=9:transfer-characteristics=16:matrix-coefficients=9:color-range=1:\
                      input-depth=10:\
                      mastering-display={}:\
                      content-light={},{}",

@@ -10,6 +10,7 @@ pub struct TimingController {
 }
 
 /// Timing advice returned for each frame.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub struct FrameTiming {
     /// Presentation timestamp relative to stream start, in nanoseconds.
@@ -61,26 +62,6 @@ impl TimingController {
             duration_ns,
             drop,
         }
-    }
-
-    pub fn estimated_fps(&self) -> (u32, u32) {
-        if self.frame_count < 2 || self.last_pts_ns == 0 {
-            return (60, 1);
-        }
-        let fps_f = self.frame_count as f64 * 1e9 / self.last_pts_ns as f64;
-        for &(n, d) in &[
-            (60000u32, 1001u32),
-            (30000, 1001),
-            (60, 1),
-            (30, 1),
-            (25, 1),
-            (24000, 1001),
-        ] {
-            if ((n as f64 / d as f64) - fps_f).abs() < 0.5 {
-                return (n, d);
-            }
-        }
-        (fps_f.round() as u32, 1)
     }
 }
 

@@ -313,7 +313,7 @@ impl SwapchainCapture {
             let barrier_to_transfer = vk::ImageMemoryBarrier {
                 s_type: vk::StructureType::IMAGE_MEMORY_BARRIER,
                 p_next: std::ptr::null(),
-                src_access_mask: vk::AccessFlags::MEMORY_READ,
+                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                 dst_access_mask: vk::AccessFlags::TRANSFER_READ,
                 old_layout: layout,
                 new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
