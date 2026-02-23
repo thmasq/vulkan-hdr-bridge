@@ -146,7 +146,7 @@ pub unsafe fn load_device<F: Copy>(
     device: vk::Device,
     name: &[u8],
 ) -> Option<F> {
-    let raw: *const c_void = unsafe { std::mem::transmute(gdpa(device, name.as_ptr() as _)) };
+    let raw: *const c_void = unsafe { std::mem::transmute(gdpa(device, name.as_ptr().cast())) };
     (!raw.is_null()).then(|| unsafe { std::mem::transmute_copy(&raw) })
 }
 
@@ -155,7 +155,7 @@ pub unsafe fn load_instance<F: Copy>(
     instance: vk::Instance,
     name: &[u8],
 ) -> Option<F> {
-    let raw: *const c_void = unsafe { std::mem::transmute(gipa(instance, name.as_ptr() as _)) };
+    let raw: *const c_void = unsafe { std::mem::transmute(gipa(instance, name.as_ptr().cast())) };
     (!raw.is_null()).then(|| unsafe { std::mem::transmute_copy(&raw) })
 }
 
@@ -299,15 +299,16 @@ impl InstanceTable {
         phys: vk::PhysicalDevice,
     ) -> vk::PhysicalDeviceMemoryProperties {
         let mut props = vk::PhysicalDeviceMemoryProperties::default();
-        unsafe { (self.get_phys_dev_memory_props)(phys, &mut props) };
+        unsafe { (self.get_phys_dev_memory_props)(phys, &raw mut props) };
         props
     }
 
+    #[must_use] 
     pub unsafe fn find_transfer_queue_family(&self, phys: vk::PhysicalDevice) -> u32 {
         let mut count = 0u32;
-        unsafe { (self.get_phys_dev_queue_family_props)(phys, &mut count, std::ptr::null_mut()) };
+        unsafe { (self.get_phys_dev_queue_family_props)(phys, &raw mut count, std::ptr::null_mut()) };
         let mut props = vec![vk::QueueFamilyProperties::default(); count as usize];
-        unsafe { (self.get_phys_dev_queue_family_props)(phys, &mut count, props.as_mut_ptr()) };
+        unsafe { (self.get_phys_dev_queue_family_props)(phys, &raw mut count, props.as_mut_ptr()) };
         props
             .iter()
             .enumerate()

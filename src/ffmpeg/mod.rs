@@ -34,8 +34,8 @@ impl FfmpegSink {
         cmd.arg("-hide_banner")
             .args(["-f", "rawvideo"])
             .args(["-pixel_format", pix_fmt])
-            .args(["-video_size", &format!("{}x{}", width, height)])
-            .args(["-framerate", &format!("{}/{}", fps_num, fps_den)])
+            .args(["-video_size", &format!("{width}x{height}")])
+            .args(["-framerate", &format!("{fps_num}/{fps_den}")])
             .args(["-i", "pipe:0"])
             .args([
                 "-vf",
@@ -55,9 +55,8 @@ impl FfmpegSink {
                 &format!(
                     "tune=0:color-primaries=9:transfer-characteristics=16:matrix-coefficients=9:color-range=1:\
                      input-depth=10:\
-                     mastering-display={}:\
-                     content-light={},{}",
-                    master_display, MAX_CLL, MAX_FALL
+                     mastering-display={master_display}:\
+                     content-light={MAX_CLL},{MAX_FALL}"
                 ),
             ])
             // Output
@@ -76,12 +75,7 @@ impl FfmpegSink {
             .ok_or_else(|| BridgeError::Ffmpeg("FFmpeg stdin unavailable".into()))?;
 
         log::info!(
-            "FFmpeg spawned → {} ({}×{} @{}/{} fps, AV1 Main10 PQ)",
-            output_path,
-            width,
-            height,
-            fps_num,
-            fps_den
+            "FFmpeg spawned → {output_path} ({width}×{height} @{fps_num}/{fps_den} fps, AV1 Main10 PQ)"
         );
 
         Ok(Self { child, stdin })
@@ -99,8 +93,7 @@ impl FfmpegSink {
             Ok(())
         } else {
             Err(BridgeError::Ffmpeg(format!(
-                "FFmpeg exited with {}",
-                status
+                "FFmpeg exited with {status}"
             )))
         }
     }

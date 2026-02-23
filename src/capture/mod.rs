@@ -68,98 +68,14 @@ impl SwapchainCapture {
     ) -> Result<Self> {
         validate_format(format)?;
 
-        let staging_size = pixel_stride(format) * (width * height) as vk::DeviceSize;
-        let dev = dt.handle;
-
+        let staging_size = pixel_stride(format) * vk::DeviceSize::from(width * height);
         let num_slots = 8;
         let total_staging_size = staging_size * num_slots as vk::DeviceSize;
 
-        let staging_buf = unsafe {
-            let info = vk::BufferCreateInfo::default()
-                .size(total_staging_size)
-                .usage(vk::BufferUsageFlags::TRANSFER_DST)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            let mut buf = vk::Buffer::null();
-            (dt.create_buffer)(dev, &info, std::ptr::null(), &mut buf)
-                .result()
-                .map_err(BridgeError::Vk)?;
-            buf
-        };
+        let (staging_buf, staging_mem, mapped_ptr) =
+            Self::create_staging_buffer(it, phys, &dt, total_staging_size)?;
 
-        let staging_mem = unsafe {
-            let mut reqs = vk::MemoryRequirements::default();
-            (dt.get_buffer_memory_requirements)(dev, staging_buf, &mut reqs);
-            let mem_props = it.get_physical_device_memory_properties(phys);
-            let mem_type = find_memory_type(
-                &mem_props,
-                reqs.memory_type_bits,
-                vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT
-                    | vk::MemoryPropertyFlags::HOST_CACHED,
-            )?;
-            let alloc_info = vk::MemoryAllocateInfo::default()
-                .allocation_size(reqs.size)
-                .memory_type_index(mem_type);
-            let mut mem = vk::DeviceMemory::null();
-            (dt.allocate_memory)(dev, &alloc_info, std::ptr::null(), &mut mem)
-                .result()
-                .map_err(BridgeError::Vk)?;
-            (dt.bind_buffer_memory)(dev, staging_buf, mem, 0)
-                .result()
-                .map_err(BridgeError::Vk)?;
-            mem
-        };
-
-        let mapped_ptr = unsafe {
-            let mut ptr: *mut std::os::raw::c_void = std::ptr::null_mut();
-            (dt.map_memory)(
-                dev,
-                staging_mem,
-                0,
-                total_staging_size,
-                vk::MemoryMapFlags::empty(),
-                &mut ptr,
-            )
-            .result()
-            .map_err(BridgeError::Vk)?;
-            ptr as *mut u8
-        };
-
-        let mut slots = Vec::with_capacity(num_slots);
-
-        for _ in 0..num_slots {
-            let present_semaphore = unsafe {
-                let mut s = vk::Semaphore::null();
-                (dt.create_semaphore)(
-                    dev,
-                    &vk::SemaphoreCreateInfo::default(),
-                    std::ptr::null(),
-                    &mut s,
-                )
-                .result()
-                .map_err(BridgeError::Vk)?;
-                s
-            };
-
-            let fence = unsafe {
-                let mut f = vk::Fence::null();
-                (dt.create_fence)(
-                    dev,
-                    &vk::FenceCreateInfo::default(),
-                    std::ptr::null(),
-                    &mut f,
-                )
-                .result()
-                .map_err(BridgeError::Vk)?;
-                f
-            };
-
-            slots.push(CaptureSlot {
-                fence,
-                present_semaphore,
-                cmd_data: Mutex::new(None),
-            });
-        }
+        let slots = Self::create_capture_slots(&dt, num_slots)?;
 
         let shared = Arc::new(CaptureShared {
             dt,
@@ -181,34 +97,157 @@ impl SwapchainCapture {
             free_tx.send(i).unwrap();
         }
 
-        let shared_clone = Arc::clone(&shared);
-        let worker_handle = std::thread::spawn(move || {
-            let dt = &*shared_clone.dt;
+        let worker_handle = Self::spawn_worker(Arc::clone(&shared), work_rx, free_tx);
+
+        Ok(Self {
+            shared,
+            work_tx,
+            free_rx,
+            worker_handle: Some(worker_handle),
+        })
+    }
+
+    fn create_staging_buffer(
+        it: &InstanceTable,
+        phys: vk::PhysicalDevice,
+        dt: &DeviceTable,
+        total_size: vk::DeviceSize,
+    ) -> Result<(vk::Buffer, vk::DeviceMemory, *mut u8)> {
+        let dev = dt.handle;
+
+        let staging_buf = unsafe {
+            let info = vk::BufferCreateInfo::default()
+                .size(total_size)
+                .usage(vk::BufferUsageFlags::TRANSFER_DST)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            let mut buf = vk::Buffer::null();
+            (dt.create_buffer)(dev, &raw const info, std::ptr::null(), &raw mut buf)
+                .result()
+                .map_err(BridgeError::Vk)?;
+            buf
+        };
+
+        let staging_mem = unsafe {
+            let mut reqs = vk::MemoryRequirements::default();
+            (dt.get_buffer_memory_requirements)(dev, staging_buf, &raw mut reqs);
+            let mem_props = it.get_physical_device_memory_properties(phys);
+            let mem_type = find_memory_type(
+                &mem_props,
+                reqs.memory_type_bits,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::HOST_CACHED,
+            )?;
+            let alloc_info = vk::MemoryAllocateInfo::default()
+                .allocation_size(reqs.size)
+                .memory_type_index(mem_type);
+            let mut mem = vk::DeviceMemory::null();
+            (dt.allocate_memory)(dev, &raw const alloc_info, std::ptr::null(), &raw mut mem)
+                .result()
+                .map_err(BridgeError::Vk)?;
+            (dt.bind_buffer_memory)(dev, staging_buf, mem, 0)
+                .result()
+                .map_err(BridgeError::Vk)?;
+            mem
+        };
+
+        let mapped_ptr = unsafe {
+            let mut ptr: *mut std::os::raw::c_void = std::ptr::null_mut();
+            (dt.map_memory)(
+                dev,
+                staging_mem,
+                0,
+                total_size,
+                vk::MemoryMapFlags::empty(),
+                &raw mut ptr,
+            )
+            .result()
+            .map_err(BridgeError::Vk)?;
+            ptr.cast::<u8>()
+        };
+
+        Ok((staging_buf, staging_mem, mapped_ptr))
+    }
+
+    fn create_capture_slots(dt: &DeviceTable, num_slots: usize) -> Result<Vec<CaptureSlot>> {
+        let dev = dt.handle;
+        let mut slots = Vec::with_capacity(num_slots);
+
+        for _ in 0..num_slots {
+            let present_semaphore = unsafe {
+                let mut s = vk::Semaphore::null();
+                (dt.create_semaphore)(
+                    dev,
+                    &vk::SemaphoreCreateInfo::default(),
+                    std::ptr::null(),
+                    &raw mut s,
+                )
+                .result()
+                .map_err(BridgeError::Vk)?;
+                s
+            };
+
+            let fence = unsafe {
+                let mut f = vk::Fence::null();
+                (dt.create_fence)(
+                    dev,
+                    &vk::FenceCreateInfo::default(),
+                    std::ptr::null(),
+                    &raw mut f,
+                )
+                .result()
+                .map_err(BridgeError::Vk)?;
+                f
+            };
+
+            slots.push(CaptureSlot {
+                fence,
+                present_semaphore,
+                cmd_data: Mutex::new(None),
+            });
+        }
+
+        Ok(slots)
+    }
+
+    fn spawn_worker(
+        shared: Arc<CaptureShared>,
+        work_rx: Receiver<(usize, u64)>,
+        free_tx: Sender<usize>,
+    ) -> JoinHandle<()> {
+        std::thread::spawn(move || {
+            let dt = &*shared.dt;
             let dev = dt.handle;
 
             for (slot_idx, pts_ns) in work_rx {
-                let slot = &shared_clone.slots[slot_idx];
+                let slot = &shared.slots[slot_idx];
 
                 unsafe {
-                    let _ = (dt.wait_for_fences)(dev, 1, &slot.fence, vk::TRUE, 1_000_000_000);
+                    let _ = (dt.wait_for_fences)(
+                        dev,
+                        1,
+                        &raw const slot.fence,
+                        vk::TRUE,
+                        1_000_000_000,
+                    );
                 }
 
-                let offset = (slot_idx as vk::DeviceSize * shared_clone.staging_size) as usize;
+                let offset = (slot_idx as vk::DeviceSize * shared.staging_size) as usize;
                 let bytes = unsafe {
                     std::slice::from_raw_parts(
-                        shared_clone.mapped_ptr.add(offset),
-                        shared_clone.staging_size as usize,
+                        shared.mapped_ptr.add(offset),
+                        shared.staging_size as usize,
                     )
                 };
 
                 let raw_bytes = bytes.to_vec();
 
-                if shared_clone
+                if shared
                     .out_tx
                     .try_send(CapturedFrame {
-                        width: shared_clone.width,
-                        height: shared_clone.height,
-                        format: shared_clone.format,
+                        width: shared.width,
+                        height: shared.height,
+                        format: shared.format,
                         raw_bytes,
                         pts_ns,
                     })
@@ -219,13 +258,6 @@ impl SwapchainCapture {
 
                 let _ = free_tx.send(slot_idx);
             }
-        });
-
-        Ok(Self {
-            shared,
-            work_tx,
-            free_rx,
-            worker_handle: Some(worker_handle),
         })
     }
 
@@ -238,28 +270,39 @@ impl SwapchainCapture {
         pts_ns: u64,
         wait_semaphores: &[vk::Semaphore],
     ) -> Result<Option<vk::Semaphore>> {
-        let slot_idx = match self.free_rx.try_recv() {
-            Ok(idx) => idx,
-            Err(_) => {
-                log::warn!("Capture dropped — no free slots pts={}", pts_ns);
-                return Ok(None);
-            }
+        let Ok(slot_idx) = self.free_rx.try_recv() else {
+            log::warn!("Capture dropped — no free slots pts={pts_ns}");
+            return Ok(None);
         };
 
         let slot = &self.shared.slots[slot_idx];
+        let cmd_buf = self.prepare_command_buffer(slot, queue_family)?;
+
+        self.record_copy_commands(cmd_buf, slot_idx, slot.fence, image, layout)?;
+        self.submit_capture(cmd_buf, queue, slot, wait_semaphores)?;
+
+        let _ = self.work_tx.try_send((slot_idx, pts_ns));
+
+        Ok(Some(slot.present_semaphore))
+    }
+
+    fn prepare_command_buffer(
+        &self,
+        slot: &CaptureSlot,
+        queue_family: u32,
+    ) -> Result<vk::CommandBuffer> {
         let dt = &*self.shared.dt;
         let dev = dt.handle;
-
         let mut cmd_guard = slot.cmd_data.lock().unwrap();
 
-        if let Some(cmd) = cmd_guard.as_ref() {
-            if cmd.queue_family != queue_family {
-                unsafe {
-                    (dt.free_command_buffers)(dev, cmd.pool, 1, &cmd.buf);
-                    (dt.destroy_command_pool)(dev, cmd.pool, std::ptr::null());
-                }
-                *cmd_guard = None;
+        if let Some(cmd) = cmd_guard.as_ref()
+            && cmd.queue_family != queue_family
+        {
+            unsafe {
+                (dt.free_command_buffers)(dev, cmd.pool, 1, &raw const cmd.buf);
+                (dt.destroy_command_pool)(dev, cmd.pool, std::ptr::null());
             }
+            *cmd_guard = None;
         }
 
         if cmd_guard.is_none() {
@@ -268,16 +311,21 @@ impl SwapchainCapture {
                     .queue_family_index(queue_family)
                     .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
                 let mut pool = vk::CommandPool::null();
-                (dt.create_command_pool)(dev, &pool_info, std::ptr::null(), &mut pool)
-                    .result()
-                    .map_err(BridgeError::Vk)?;
+                (dt.create_command_pool)(
+                    dev,
+                    &raw const pool_info,
+                    std::ptr::null(),
+                    &raw mut pool,
+                )
+                .result()
+                .map_err(BridgeError::Vk)?;
 
                 let alloc_info = vk::CommandBufferAllocateInfo::default()
                     .command_pool(pool)
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .command_buffer_count(1);
                 let mut cb = vk::CommandBuffer::null();
-                (dt.allocate_command_buffers)(dev, &alloc_info, &mut cb)
+                (dt.allocate_command_buffers)(dev, &raw const alloc_info, &raw mut cb)
                     .result()
                     .map_err(BridgeError::Vk)?;
 
@@ -293,20 +341,32 @@ impl SwapchainCapture {
             });
         }
 
-        let cmd_buf = cmd_guard.as_ref().unwrap().buf;
+        Ok(cmd_guard.as_ref().unwrap().buf)
+    }
+
+    fn record_copy_commands(
+        &self,
+        cmd_buf: vk::CommandBuffer,
+        slot_idx: usize,
+        fence: vk::Fence,
+        image: vk::Image,
+        layout: vk::ImageLayout,
+    ) -> Result<()> {
+        let dt = &*self.shared.dt;
+        let dev = dt.handle;
 
         unsafe {
             (dt.reset_command_buffer)(cmd_buf, vk::CommandBufferResetFlags::empty())
                 .result()
                 .map_err(BridgeError::Vk)?;
 
-            (dt.reset_fences)(dev, 1, &slot.fence)
+            (dt.reset_fences)(dev, 1, &raw const fence)
                 .result()
                 .map_err(BridgeError::Vk)?;
 
             let begin = vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            (dt.begin_command_buffer)(cmd_buf, &begin)
+            (dt.begin_command_buffer)(cmd_buf, &raw const begin)
                 .result()
                 .map_err(BridgeError::Vk)?;
 
@@ -334,7 +394,7 @@ impl SwapchainCapture {
                 0,
                 std::ptr::null(),
                 1,
-                &barrier_to_transfer,
+                &raw const barrier_to_transfer,
             );
 
             let copy = vk::BufferImageCopy {
@@ -361,7 +421,7 @@ impl SwapchainCapture {
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 self.shared.staging_buf,
                 1,
-                &copy,
+                &raw const copy,
             );
 
             let barrier_to_original = vk::ImageMemoryBarrier {
@@ -388,13 +448,27 @@ impl SwapchainCapture {
                 0,
                 std::ptr::null(),
                 1,
-                &barrier_to_original,
+                &raw const barrier_to_original,
             );
 
             (dt.end_command_buffer)(cmd_buf)
                 .result()
                 .map_err(BridgeError::Vk)?;
+        }
 
+        Ok(())
+    }
+
+    fn submit_capture(
+        &self,
+        cmd_buf: vk::CommandBuffer,
+        queue: vk::Queue,
+        slot: &CaptureSlot,
+        wait_semaphores: &[vk::Semaphore],
+    ) -> Result<()> {
+        let dt = &*self.shared.dt;
+
+        unsafe {
             let wait_dst_stage_mask =
                 vec![vk::PipelineStageFlags::ALL_COMMANDS; wait_semaphores.len()];
             let submit = vk::SubmitInfo::default()
@@ -403,14 +477,12 @@ impl SwapchainCapture {
                 .command_buffers(std::slice::from_ref(&cmd_buf))
                 .signal_semaphores(std::slice::from_ref(&slot.present_semaphore));
 
-            (dt.queue_submit)(queue, 1, &submit, slot.fence)
+            (dt.queue_submit)(queue, 1, &raw const submit, slot.fence)
                 .result()
                 .map_err(BridgeError::Vk)?;
         }
 
-        let _ = self.work_tx.try_send((slot_idx, pts_ns));
-
-        Ok(Some(slot.present_semaphore))
+        Ok(())
     }
 }
 
@@ -430,8 +502,9 @@ impl Drop for SwapchainCapture {
             for slot in &self.shared.slots {
                 (dt.destroy_semaphore)(dev, slot.present_semaphore, std::ptr::null());
                 (dt.destroy_fence)(dev, slot.fence, std::ptr::null());
-                if let Some(cmd) = slot.cmd_data.lock().unwrap().take() {
-                    (dt.free_command_buffers)(dev, cmd.pool, 1, &cmd.buf);
+                let value = slot.cmd_data.lock().unwrap().take();
+                if let Some(cmd) = value {
+                    (dt.free_command_buffers)(dev, cmd.pool, 1, &raw const cmd.buf);
                     (dt.destroy_command_pool)(dev, cmd.pool, std::ptr::null());
                 }
             }
@@ -444,7 +517,7 @@ impl Drop for SwapchainCapture {
 
 pub fn validate_format(fmt: vk::Format) -> Result<()> {
     if SUPPORTED_FORMATS.contains(&fmt) {
-        log::info!("Capture: format accepted: {:?}", fmt);
+        log::info!("Capture: format accepted: {fmt:?}");
         Ok(())
     } else {
         Err(BridgeError::UnsupportedFormat(fmt))
@@ -459,7 +532,7 @@ fn pixel_stride(fmt: vk::Format) -> vk::DeviceSize {
     }
 }
 
-fn color_subresource_range() -> vk::ImageSubresourceRange {
+const fn color_subresource_range() -> vk::ImageSubresourceRange {
     vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
